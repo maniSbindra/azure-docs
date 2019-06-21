@@ -26,22 +26,24 @@ Each virtual machine (VM) in Azure is created from an image that defines the Lin
 
 
 ## Create Azure resource group
-During the build process, Packer creates temporary Azure resources as it builds the source VM. To capture that source VM for use as an image, you must define a resource group. The output from the Packer build process is stored in this resource group.
+During the build process, Packer creates temporary Azure resources as it builds the source VM. Packer can create all these temporary resources in a pre-existing resource group (build resource group). After this packer captures that source VM for use as an image, you must define a resource group (image resource group) where packer stores these VM image. 
 
-Create a resource group with [az group create](/cli/azure/group). The following example creates a resource group named *myResourceGroup* in the *eastus* location:
+Create the build and image resource groups with [az group create](/cli/azure/group). The following example creates a resource group named *myResourceGroup* in the *eastus* location:
 
 ```azurecli
-az group create -n myResourceGroup -l eastus
+az group create -n myBuildResourceGroup -l eastus
+az group create -n myImageResourceGroup -l eastus
 ```
 
 
 ## Create Azure credentials
-Packer authenticates with Azure using a service principal. An Azure service principal is a security identity that you can use with apps, services, and automation tools like Packer. You control and define the permissions as to what operations the service principal can perform in Azure. For the template shown in this example the service principal created must have full access to the subscription. To use packer with a service principal having limited permissions (contributor access to the build resource group and the image resource group) see [build image with packer using service principal with restricted access](./build-image-with-packer-build-resource-group.md) (packer docs Reference To be removed later [packer docs](https://www.packer.io/docs/builders/azure.html#required-options-for-authentication-) )
 
-Create a service principal with [az ad sp create-for-rbac](/cli/azure/ad/sp) and output the credentials that Packer needs:
+Create a service principal which has contributor access to the build and image resource groups with [az ad sp create-for-rbac](/cli/azure/ad/sp) and output the credentials that Packer needs:
 
 ```azurecli
-az ad sp create-for-rbac --query "{ client_id: appId, client_secret: password, tenant_id: tenant }"
+az ad sp create-for-rbac --role contributor \
+--scopes /subscriptions/redacted/resourceGroups/myBuildResourceGroup  \ 
+/subscriptions/redacted/resourceGroups/myImageResourceGroup --query "{ client_id: appId, client_secret: password, tenant_id: tenant }"
 ```
 
 An example of the output from the preceding commands is as follows:
@@ -74,50 +76,54 @@ Create a file named *ubuntu.json* and paste the following content. Enter your ow
 | *client_secret*                     | Second line of output from `az ad sp` create command - *password* |
 | *tenant_id*                         | Third line of output from `az ad sp` create command - *tenant* |
 | *subscription_id*                   | Output from `az account show` command |
-| *managed_image_resource_group_name* | Name of resource group you created in the first step |
+| *build_resource_group_name* | Name of the build resource group you created in the first step |
+| *managed_image_resource_group_name* | Name of the image resource group you created in the first step |
 | *managed_image_name*                | Name for the managed disk image that is created |
 
 
 ```json
 {
-  "builders": [{
-    "type": "azure-arm",
+    "builders": [
+        {
+            "type": "azure-arm",
 
-    "client_id": "f5b6a5cf-fbdf-4a9f-b3b8-3c2cd00225a4",
-    "client_secret": "0e760437-bf34-4aad-9f8d-870be799c55d",
-    "tenant_id": "72f988bf-86f1-41af-91ab-2d7cd011db47",
-    "subscription_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxx",
+            "client_id": "f5b6a5cf-fbdf-4a9f-b3b8-3c2cd00225a4",
+            "client_secret": "0e760437-bf34-4aad-9f8d-870be799c55d",
+            "subscription_id": "72f988bf-86f1-41af-91ab-2d7cd011db47",
+            "tenant_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxx",
 
-    "managed_image_resource_group_name": "myResourceGroup",
-    "managed_image_name": "myPackerImage",
-
-    "os_type": "Linux",
-    "image_publisher": "Canonical",
-    "image_offer": "UbuntuServer",
-    "image_sku": "16.04-LTS",
-
-    "azure_tags": {
-        "dept": "Engineering",
-        "task": "Image deployment"
-    },
-
-    "location": "East US",
-    "vm_size": "Standard_DS2_v2"
-  }],
-  "provisioners": [{
-    "execute_command": "chmod +x {{ .Path }}; {{ .Vars }} sudo -E sh '{{ .Path }}'",
-    "inline": [
-      "apt-get update",
-      "apt-get upgrade -y",
-      "apt-get -y install nginx",
-
-      "/usr/sbin/waagent -force -deprovision+user && export HISTSIZE=0 && sync"
+            "build_resource_group_name": "myBuildResourceGroup",
+            "managed_image_resource_group_name": "myImageResourceGroup",
+            "managed_image_name": "myPackerImage",
+            
+            "os_type": "Linux",
+            "image_publisher": "Canonical",
+            "image_offer": "UbuntuServer",
+            "image_sku": "16.04-LTS",
+            "azure_tags": {
+                "dept": "engineering",
+                "task": "Image deployment"
+            },
+            "vm_size": "Standard_DS2_v2"
+        }
     ],
-    "inline_shebang": "/bin/sh -x",
-    "type": "shell"
-  }]
+    "provisioners": [
+        {
+            "execute_command": "chmod +x {{ .Path }}; {{ .Vars }} sudo -E sh '{{ .Path }}'",
+            "inline": [
+                "apt-get update",
+                "apt-get upgrade -y",
+                "apt-get -y install nginx",
+                "/usr/sbin/waagent -force -deprovision+user && export HISTSIZE=0 && sync"
+            ],
+            "inline_shebang": "/bin/sh -x",
+            "type": "shell"
+        }
+    ]
 }
 ```
+
+<TODO: to Modify log outputs>
 
 This template builds an Ubuntu 16.04 LTS image, installs NGINX, then deprovisions the VM.
 
